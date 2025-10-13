@@ -175,6 +175,9 @@ def parse_args():
     elif args1.dataset.lower() in GLUE_DATASETS + LLM_DATASETS:
         problem = "fine_tuning"
         parser = set_arguments_ft(parser)
+    elif args1.dataset.lower() == "style":
+        problem = "style"
+        parser = set_arguments_ft(parser)
     else:
         raise ValueError(
             f"""
@@ -210,7 +213,7 @@ def parse_args():
             print(colored(line, "red"))
 
     if len(unparced_args) > 0:
-        print(colored("~~~~~~~~~~~~~~~ WARNING: UNPARCED ARGS ~~~~~~~~~~~~~~~", "red"))
+        print(colored("~~~~~~~~~~~~~~~ WARNING: UNPASCED ARGS ~~~~~~~~~~~~~~~", "red"))
         line = "You pass unrecognized arguments:"
         print(colored(line, "red"), end="")
         for arg in unparced_args:

@@ -190,7 +190,8 @@ def get_peft_arguments(args):
     else:
         raise ValueError(f"Incorrect FT type {args.ft_strategy}!")
 
-    if "deberta" in args.model.lower():
+    model_name = args.model.lower()
+    if "deberta" in model_name:
         peft_args.target_modules = [
             "query_proj",
             "key_proj",
@@ -198,7 +199,7 @@ def get_peft_arguments(args):
             "intermediate.dense",
             "output.dense",
         ]
-    elif "bart" in args.model.lower():
+    elif "bart" in model_name:
         peft_args.target_modules = [
             "q_proj",
             "k_proj",
@@ -216,12 +217,12 @@ def get_peft_arguments(args):
             "k_proj",
             "v_proj",
             "o_proj",
-            "gate_proj",
-            "up_proj",
-            "down_proj",
+            #"gate_proj",
+            #"up_proj",
+            #"down_proj",
             "lm_head",
         ]
-    elif "qwen" in args.model.lower():
+    elif "qwen" in model_name:
         peft_args.target_modules = [
             "q_proj",
             "k_proj",
@@ -232,18 +233,18 @@ def get_peft_arguments(args):
             "down_proj",
             "lm_head",
         ]
-    elif "distilbert-base" in args.model.lower():
+    elif "distilbert-base" in model_name:
         peft_args.target_modules = [
             "q_lin",
             "k_lin",
             "v_lin",
         ]
-    elif "flan" in args.model.lower() or "t5" in args.model.lower():
+    elif "flan" in model_name or "t5" in model_name:
         peft_args.target_modules = [
             "v",
             "o",
             "q",
-            "o",
+            "k",
             "wi",
         ]
     else:

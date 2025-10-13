@@ -10,7 +10,7 @@ dependencies:
     - pandas
     - matplotlib
     - scikit-learn
-    - temcolor
+    - termcolor
     - pip:
           - torch==2.6.0
           - torchaudio==2.6.0
