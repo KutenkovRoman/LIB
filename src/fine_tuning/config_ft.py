@@ -271,7 +271,7 @@ def set_arguments_ft(parser):
     )
     parser.add_argument(
         "--warmup_ratio",
-        default=0.1,
+        default=0.0,
         type=float,
         help="Ratio of total training steps for warmup",
     )

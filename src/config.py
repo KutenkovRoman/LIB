@@ -213,7 +213,7 @@ def parse_args():
             print(colored(line, "red"))
 
     if len(unparced_args) > 0:
-        print(colored("~~~~~~~~~~~~~~~ WARNING: UNPASCED ARGS ~~~~~~~~~~~~~~~", "red"))
+        print(colored("~~~~~~~~~~~~~~~ WARNING: UNPARSED ARGS ~~~~~~~~~~~~~~~", "red"))
         line = "You pass unrecognized arguments:"
         print(colored(line, "red"), end="")
         for arg in unparced_args:

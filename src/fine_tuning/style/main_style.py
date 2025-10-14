@@ -34,19 +34,7 @@ class Finetuner:
         self.args = args
         self.model = None
         self.tokenizer = None
-        self.builder = None
-
-        style = self.args.dataset_path.split('/')[-1]
-        use_style_for_lr = False
-
-        if use_style_for_lr:
-            lr_table = {
-                "conversational": 1e-5,
-                "scientific": 2e-5,
-                "business": 2e-5,
-                "aggressive": 1e-5,
-            }
-            self.args.lr = lr_table[style]
+        #self.builder = None
 
         self.setup_logging()
         if self.args.wandb:
@@ -59,7 +47,7 @@ class Finetuner:
     def setup_wandb(self):
         """Setup Weights & Biases logging"""
         style = self.args.dataset_path.split('/')[-1]
-        run_name = f"[re_{style} | seed={self.args.seed}]" # lr={self.args.lr:.1e} | seed={self.args.seed}
+        run_name = f"[{style} | seed={self.args.seed}]" # lr={self.args.lr:.1e} | seed={self.args.seed}
         wandb.init(
             project=self.args.wandb_project,
             tags=[self.args.model, self.args.dataset, self.args.optimizer],
@@ -87,6 +75,7 @@ class Finetuner:
             torch_dtype = torch.float32
         elif self.args.dtype == "float64":
             torch_dtype = torch.float64
+
         # Setup quantization config
         if self.args.quant_bit == 8:
             bnb_config = BitsAndBytesConfig(
@@ -137,15 +126,15 @@ class Finetuner:
             self.model = peft.get_peft_model(self.model, peft_args)
 
         # Print trainable parameters info
-        ##TODO: fix wrong order
-        tr_param_count, all_param_count, tr_persent = utils.print_trainable_params(
+        all_param_count, tr_param_count, tr_persent = utils.print_trainable_params(
             self.model, verbose=True
         )
 
         num_peft_adapters = utils.count_atapters(self.model, self.args.ft_strategy)
 
         ##TODO: rewrite this so these metrics are not displayed as one-point plots
-        if self.args.wandb:
+        report_param_stat = False
+        if self.args.wandb and report_param_stat:
             wandb.log({
                 "trainable_params_count": tr_param_count,
                 "total_param_count": all_param_count,
@@ -238,8 +227,14 @@ class Finetuner:
         #    logger.error("No evaluation data available")
         #    return
 
+        if self.args.save_strategy != "no" and self.args.save_name is None:
+            raise ValueError(f"Provide --save_name argument to use save_strategy={self.args.save_strategy}.")
+
         # Setup trainer
-        style = self.args.dataset_path.split('/')[-1]
+        output_dir = (
+            f"./src/fine_tuning/style/{self.args.results_path}/"
+            f"{self.args.save_name if self.args.save_name is not None else '_'}"
+        )
         training_args = TrainingArguments(
             do_train=not self.args.do_not_train,
             do_eval=not self.args.do_not_eval,
@@ -266,15 +261,15 @@ class Finetuner:
             save_steps=self.args.save_steps,
             bf16=(self.args.dtype == "bfloat16"),
             fp16=(self.args.dtype == "float16"),
-            output_dir=f"./src/fine_tuning/style/{self.args.results_path}/Qwen_n2{style[0]}/seed_{self.args.seed}",
+            output_dir=output_dir,
             overwrite_output_dir=True, #added
-            #logging_dir=f"./src/fine_tuning/style/{self.args.results_path}/{self.args.run_name}",
+            #logging_dir=output_dir,
             run_name=self.args.run_name,
             report_to=["wandb" if self.args.wandb else "none"],
             #eval_on_start=True,
         )
 
-        optimizer = self.get_optimizer() # this is how we tell trainer to use WLoRA
+        optimizer = self.get_optimizer()
 
         trainer = Trainer(
             model=self.model,
@@ -418,12 +413,10 @@ class Finetuner:
                 is_trainable=True
             )
 
-            #k = 0
+            # Assuming that layers are named as layer.{layer_no}.{module}
             for name, param in self.model.named_parameters():
                 if f".{i}." not in name:
                     param.requires_grad = False
-                    #k += 1
-            #logger.info(f"Disabled {k} parameters")
 
             self.load_datasets()
 
