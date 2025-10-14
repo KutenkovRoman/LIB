@@ -49,4 +49,9 @@ Arguments are processed hierarchically. When running an experiment:
 
 ## 🔧 How to run code
 
-There are example scripts `Llama2_alt.sh` and `Qwen.sh` located in `./scripts/style` that have basic setup. You must set `dataset=style` and specify `--dataset_path` to choose dataset (stored locally). To use `wandb` (if available) set flag `--wandb` and specify `--wandb_project`. In order to save adapters after fine-tuning set `save_strategy=steps/epoches` and specify `--save_name`, results will be stored in `./scr/fine_tuning/style/results_raw/{save_name}`. Some models (e.g. `Llama-2-7b-hf`) require hf-token to load.
+1. To run code use `python ./src/run_experiment.py` and provide neccessary arguments
+2. There are examplary scripts `Llama2_alt.sh` and `Qwen.sh` located in `./scripts/style`
+3. You must set `dataset=style` and specify `--dataset_path` to choose dataset (stored locally) that will be used
+4. To use `wandb` (if available) set flag `--wandb` and specify `--wandb_project`
+5. To save adapters set `save_strategy=steps/epoches` and specify `--save_name`, results will be stored in `./scr/fine_tuning/style/results_raw/{save_name}`
+6. Some models (e.g. `Llama-2-7b-hf`) require hf-token to load
