@@ -302,6 +302,12 @@ def set_arguments_ft(parser):
         choices=["loss", "accuracy", "f1", "precision", "recall"],
         help="Metric to use for best model selection",
     )
+    parser.add_argument(
+        "--max_grad_norm",
+        default=1.0,
+        type=float,
+        help="Maximum gradient norm used in gradient clipping",
+    )
 
     ### PEFT Arguments
     # parser.add_argument(

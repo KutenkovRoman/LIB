@@ -111,6 +111,10 @@ class LoraLayer(BaseTunerLayer):
         self.lora_variant: dict[str, LoraVariant] = {}
         self.use_weight_lora: dict[str, bool] = {} # for WeightLoRA
         self.lora_weight = torch.nn.ParameterDict({}) # for WeightLoRA
+        self._module_name = None
+        self._random_state = 0
+        self._skip_prob = 0.005
+        self._report_skip = False
         self.kwargs = kwargs
 
         base_layer = self.get_base_layer()

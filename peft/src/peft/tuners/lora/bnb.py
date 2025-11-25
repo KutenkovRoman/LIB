@@ -26,6 +26,7 @@ from peft.utils.other import transpose
 
 from .layer import LoraLayer, LoraVariant
 
+import random
 
 if is_bnb_available():
 
@@ -510,13 +511,36 @@ if is_bnb_4bit_available():
                         expected_dtype = result.dtype
                         x = self._cast_input_dtype(x, lora_A.weight.dtype)
 
+                    do_not_skip = True
+                    if ".layers." in self._module_name:
+                        start = self._module_name.index(".layers.") + 8
+                        end = self._module_name.index(".", start)
+                        n = int(self._module_name[start:end]) - 4
+
+                        if n > 0:
+                            random.seed(self._random_state)
+                            random_state = random.randint(0, 2**31)
+
+                            # Skip with `self._skip_prob` chance for each layer
+                            f = random.random()
+                            do_not_skip = (f < (1 - self._skip_prob)**n)
+
+                            if (
+                                not do_not_skip and (f < (1 - self._skip_prob)**(n - 1)) and
+                                self._report_skip
+                            ):
+                                print(f"Skipped module {self._module_name} with x = {f:.6f}")
+
+                            self._random_state = random_state
+
                     if active_adapter not in self.lora_variant:  # vanilla LoRA
-                        output = lora_B(lora_A(dropout(x))) * scaling
-                        if self.use_weight_lora[active_adapter]:
-                            output = output * self.lora_weight[active_adapter]
-                        if requires_conversion:
-                            output = output.to(expected_dtype)
-                        result = result + output
+                        if do_not_skip:
+                            output = lora_B(lora_A(dropout(x))) * scaling
+                            if self.use_weight_lora[active_adapter]:
+                                output = output * self.lora_weight[active_adapter]
+                            if requires_conversion:
+                                output = output.to(expected_dtype)
+                            result = result + output
                     else:
                         result = self.lora_variant[active_adapter].forward(
                             self,
