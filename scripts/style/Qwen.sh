@@ -2,16 +2,19 @@
 
 clear
 
-for SEED in 88692 72236 97107 65463; do #88692 72236 97107 7946 65463
-#for SEED in 69615 89691 76240 19707 75789 30408 8288 96840 80020 91598 94890 18197 88692 72236 97107 7946 65463 79495 23249 19672; do
-    for STYLE in "scientific"; do # "conversational" "scientific" "business" "aggressive"
-        for LR in 3e-5; do #7e-5 1e-5
-            # --n_epoches_train 8 OR --max_steps 200
-            # maybe try --min_lr_ratio 0.1
+for SEED in 8288; do
+    for STYLE in "aggressive"; do  #"conversational" "scientific" "business" "aggressive"
+        for LR in 3e-5; do
+            # Qwen2-7B | Qwen3-8B
+            # options: lr, max_grad_norm, weight_decay, warmup_ratio/warmu_steps
+            # maybe try --min_lr_ratio 0.1 (need to implement manually?)
             echo "Running with seed=${SEED}, lr=${LR} and style=${STYLE}"
             CUDA_VISIBLE_DEVICES=2 python ./src/run_experiment.py \
             --model Qwen/Qwen2-7B \
             --dataset_path src/fine_tuning/style/data/$STYLE \
+            --results_path results_raw/Qwen_${STYLE}/seed_${SEED} \
+            --wandb \
+            --wandb_project QwenStyle \
             --seed $SEED \
             --padding_side left \
             --optimizer adamw \
@@ -26,8 +29,6 @@ for SEED in 88692 72236 97107 65463; do #88692 72236 97107 7946 65463
             --n_epoches_train 20 \
             --warmup_ratio 0.3 \
             --max_seq_length 512 \
-            --wandb \
-            --wandb_project Qwen_from_neutral \
             --ft_strategy LoRA \
             --lora_r 16 \
             --lora_alpha 32 \
@@ -37,7 +38,7 @@ for SEED in 88692 72236 97107 65463; do #88692 72236 97107 7946 65463
             --use_fast_tokenizer \
             --dataset style \
             --eval_strategy no \
-            --save_strategy no
+            --save_strategy steps
         done
     done
 done

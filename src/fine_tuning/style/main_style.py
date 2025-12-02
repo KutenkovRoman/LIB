@@ -288,16 +288,28 @@ class Finetuner:
 
         self.load_model_and_tokenizer()
 
-        self.setup_peft()
-        #output_dir = f"/home/kutroman/LIB/src/fine_tuning/style/{self.args.results_path}"
-        #self.model = peft.PeftModel.from_pretrained(self.model, output_dir)
-        #self.tokenizer = AutoTokenizer.from_pretrained(output_dir) # does not seem to impact generation
+        output_dir = f"/home/kutroman/LIB/src/fine_tuning/style/{self.args.results_path}"
+        # Apparently, doing this is different from setting up peft and replacing default adapters
+        # with 'theme'/'style' adapters manually. Will look into it later
+        self.model = peft.PeftModel.from_pretrained(self.model, output_dir)
+
         for name, module in self.model.named_modules():
             if isinstance(module, peft.tuners.lora.layer.LoraLayer):
                 try:
                     module._module_name = name
-                    module._skip_prob = 0.0
-                    module._random_state = 0
+                    module._skip_prob = 0.05  # corresponds to 5%
+                    module._random_state = self.args.seed
+                    module._start_skipping_from = 5  # index of first 'theme' layer
+                    # Skip all 'theme' layers within 1 forward pass with certain prob; otherwise
+                    # each 'theme' layer has an exponentially decreasing prob of not being skipped
+                    # and if skipped, all layers after it will be skipped as well
+                    module._skip_instantly = True
+                    # Skip the entire layer instead of lora adapters for this layer; should not be
+                    # used for mlp, as mlp.in_features != mlp.out_features
+                    module._full_skip = False
+                    # For debug, should be set to bool('v_proj' in name) to avoid reporting 4 or
+                    # more times for different modules in the same layer
+                    module._report_skip = False
                 except Exception as e:
                     logger.error(f"Failed with exception: {e}")
 
@@ -306,6 +318,7 @@ class Finetuner:
                 theme_layers is not None and "lora_" in name and
                 any([name.startswith(f"base_model.model.model.layers.{i}.") for i in theme_layers])
             ):
+                # No reason to do this as we probably loaded 'theme' adapters above
                 with safe_open(theme_path, framework="pt", device="cuda") as f:
                     adapter = f.get_tensor(name.replace(".default", "")) # handles naming convention
                     with torch.no_grad():
@@ -325,10 +338,6 @@ class Finetuner:
         self.model.eval()
 
         # Setup text generation pipeline
-        do_sample = True
-        num_beams = 10
-        repetition_penalty = 1.2
-        print(f"{do_sample = } | {num_beams = } | {repetition_penalty = }")
         generator = pipeline(
             "text-generation",
             model=self.model,
@@ -341,9 +350,10 @@ class Finetuner:
                     prompt,
                     max_new_tokens=96,
                     num_return_sequences=1,
-                    do_sample=do_sample,
-                    num_beams=num_beams,
-                    repetition_penalty=repetition_penalty,
+                    min_new_tokens=16,
+                    #do_sample=True,
+                    #num_beams=10,
+                    #repetition_penalty=1.2,
                 )[0]["generated_text"]
                 print("\n", generated_text.strip().replace("\n", " "), sep="")
             except Exception as e:
@@ -354,7 +364,7 @@ class Finetuner:
         utils.set_global_seed(self.args.seed)
 
         numer = denom = 0.0
-        
+
         # Llama2 specific
         num_layers = 32
         modules = [
@@ -629,12 +639,15 @@ def main(args):
         default_eval = True
         if default_eval:
             finetuner.evaluate(
-                cosmology_prompts[:8],
+                # Will trigger warning saying that there is more efficient way to generate text,
+                # maybe there is...
+                cosmology_prompts,
                 theme_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
-                "/Llama_cosmology/seed_8288/layers_5_32/adapter_model.safetensors",
+                "/Llama_cosmology/seed_8288/all_layers/adapter_model.safetensors",
                 style_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
                 "/Llama_aggressive/seed_8288/layers_0_5/adapter_model.safetensors",
-                theme_layers=list(range(5, 32)),
+                # Set to None because 'theme' adapter will be loaded using .from_pretrained
+                theme_layers=None, #list(range(5, 32))
                 style_layers=list(range(0, 5)),
             )
         else:
@@ -644,13 +657,14 @@ def main(args):
                 "/Llama_cosmology/seed_8288/all_layers/adapter_model.safetensors",
                 style_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
                 "/Llama_aggressive/seed_8288/all_layers/adapter_model.safetensors",
-                prompts=["She is", "The stars are", "Today, our"], #neutral_prompts
+                prompts=["She is", "The stars are", "Today, our"],
                 num_steps=24,
                 alpha=1.0,
                 beta=0.7,
             )
     else:
-        finetuner.run(target_layers=list(range(5, 32)), save_adapters=True)
+        # save_adapters=True saves only adapters (not optimizer, tokenizer and other stuff)
+        finetuner.run(target_layers=list(range(5, 32)), save_adapters=False)
 
 
 if __name__ == "__main__":

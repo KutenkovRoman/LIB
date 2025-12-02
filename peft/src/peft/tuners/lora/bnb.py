@@ -513,25 +513,30 @@ if is_bnb_4bit_available():
 
                     do_not_skip = True
                     if ".layers." in self._module_name:
+                        random.seed(self._random_state)
+
+                        self._random_state = random.randint(0, 2**31)
+                        rnd = random.random()
+
                         start = self._module_name.index(".layers.") + 8
                         end = self._module_name.index(".", start)
-                        n = int(self._module_name[start:end]) - 4
+                        n = int(self._module_name[start:end]) - self._start_skipping_from + 1
 
                         if n > 0:
-                            random.seed(self._random_state)
-                            random_state = random.randint(0, 2**31)
+                            layer_thr = (
+                                (1 - self._skip_prob) if self._skip_instantly else
+                                (1 - self._skip_prob)**n
+                            )
+                            do_not_skip = rnd < layer_thr
 
-                            # Skip with `self._skip_prob` chance for each layer
-                            f = random.random()
-                            do_not_skip = (f < (1 - self._skip_prob)**n)
+                            if not do_not_skip and self._report_skip:
+                                print(
+                                    f"Skipped module {self._module_name}: random() >= layer_thresh"
+                                    f" ({rnd:.6f} >= {layer_thr:.6f})"
+                                )
 
-                            if (
-                                not do_not_skip and (f < (1 - self._skip_prob)**(n - 1)) and
-                                self._report_skip
-                            ):
-                                print(f"Skipped module {self._module_name} with x = {f:.6f}")
-
-                            self._random_state = random_state
+                            if not do_not_skip and self._full_skip:
+                                return x.to(expected_dtype) if requires_conversion else x
 
                     if active_adapter not in self.lora_variant:  # vanilla LoRA
                         if do_not_skip:
