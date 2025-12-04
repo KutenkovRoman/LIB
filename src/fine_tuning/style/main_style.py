@@ -297,19 +297,20 @@ class Finetuner:
             if isinstance(module, peft.tuners.lora.layer.LoraLayer):
                 try:
                     module._module_name = name
-                    module._skip_prob = 0.05  # corresponds to 5%
+                    module._skip_prob = 0.05
                     module._random_state = self.args.seed
                     module._start_skipping_from = 5  # index of first 'theme' layer
                     # Skip all 'theme' layers within 1 forward pass with certain prob; otherwise
                     # each 'theme' layer has an exponentially decreasing prob of not being skipped
                     # and if skipped, all layers after it will be skipped as well
                     module._skip_instantly = True
+                    module._accumulate_prob = True
                     # Skip the entire layer instead of lora adapters for this layer; should not be
                     # used for mlp, as mlp.in_features != mlp.out_features
                     module._full_skip = False
-                    # For debug, should be set to bool('v_proj' in name) to avoid reporting 4 or
+                    # For debug; should be set to bool('v_proj' in name) to avoid reporting 4 or
                     # more times for different modules in the same layer
-                    module._report_skip = False
+                    module._report_skip = False  #('v_proj' in name and '.5.' in name)
                 except Exception as e:
                     logger.error(f"Failed with exception: {e}")
 
@@ -344,21 +345,24 @@ class Finetuner:
             tokenizer=self.tokenizer,
         )
 
-        for i, prompt in enumerate(prompts):
-            try:
-                generated_text = generator(
-                    prompt,
-                    max_new_tokens=96,
-                    num_return_sequences=1,
-                    min_new_tokens=16,
-                    #do_sample=True,
-                    #num_beams=10,
-                    #repetition_penalty=1.2,
-                )[0]["generated_text"]
-                print("\n", generated_text.strip().replace("\n", " "), sep="")
-            except Exception as e:
-                logger.error(f"Error processing prompt {i}: {e}")
-                continue
+        output = generator(
+            prompts,
+            max_new_tokens=96,
+            num_return_sequences=1,
+            min_new_tokens=16,
+            #do_sample=True, num_beams=8,
+            #repetition_penalty=1.2,
+        )
+
+        generated_text = [
+            t[0]["generated_text"].strip().replace("\n", " ")
+            for t in output
+        ]
+
+        for sample in generated_text:
+            print(sample, '\n', sep="")
+
+        return generated_text
 
     def eval_klora(self, K, theme_path, style_path, prompts, num_steps, alpha=1.0, beta=0.0):
         utils.set_global_seed(self.args.seed)
@@ -624,6 +628,7 @@ def main(args):
         neutral_prompts = [
             "She is", "The stars are", "Today, our", "I would ask you",
             "Well, whatever", "It is good", "What if",
+            "Today I woke up slightly more tired than usual and headed",
         ]
         cosmology_prompts = [
             "When the accretion rate increases", "If the magnetic field reverses",
@@ -635,13 +640,13 @@ def main(args):
             "As hydrogen accretes onto the degenerate core", "When thermonuclear runaway begins on the surface",
             "As the nova ejecta expand into interstellar space", "When the luminosity briefly exceeds the Eddington limit",
             "If helium burning stabilizes the outer layers", "As the protostar settles onto the main sequence",
+            "Fundamentally, electrons are extremely lightweight particles that", "Engineers use Hall effect to build",
+            "You would need to reach the speed of light to", "None of the existing theories could explain the effect of",
         ]
         default_eval = True
         if default_eval:
             finetuner.evaluate(
-                # Will trigger warning saying that there is more efficient way to generate text,
-                # maybe there is...
-                cosmology_prompts,
+                neutral_prompts,
                 theme_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
                 "/Llama_cosmology/seed_8288/all_layers/adapter_model.safetensors",
                 style_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
@@ -664,7 +669,7 @@ def main(args):
             )
     else:
         # save_adapters=True saves only adapters (not optimizer, tokenizer and other stuff)
-        finetuner.run(target_layers=list(range(5, 32)), save_adapters=False)
+        finetuner.run(target_layers=list(range(0, 5)), save_adapters=True)
 
 
 if __name__ == "__main__":

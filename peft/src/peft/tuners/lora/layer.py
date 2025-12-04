@@ -114,8 +114,10 @@ class LoraLayer(BaseTunerLayer):
         self._module_name = None
         self._random_state = 0
         self._start_skipping_from = 5
-        self._skip_prob = 0.005
+        self._skip_prob = 0.0
         self._skip_instantly = False
+        self._accumulate_prob = False
+        self._accumulated = 0
         self._full_skip = False
         self._report_skip = False
         self.kwargs = kwargs

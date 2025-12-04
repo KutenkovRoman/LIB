@@ -512,7 +512,7 @@ if is_bnb_4bit_available():
                         x = self._cast_input_dtype(x, lora_A.weight.dtype)
 
                     do_not_skip = True
-                    if ".layers." in self._module_name:
+                    if self._module_name is not None and ".layers." in self._module_name:
                         random.seed(self._random_state)
 
                         self._random_state = random.randint(0, 2**31)
@@ -523,19 +523,26 @@ if is_bnb_4bit_available():
                         n = int(self._module_name[start:end]) - self._start_skipping_from + 1
 
                         if n > 0:
+                            #layer_thr = (
+                            #    (1 - self._skip_prob) if self._skip_instantly else
+                            #    (1 - self._skip_prob)**n
+                            #)
                             layer_thr = (
-                                (1 - self._skip_prob) if self._skip_instantly else
-                                (1 - self._skip_prob)**n
+                                (1 - self._skip_prob) ** (self._accumulated + 1)
+                                if self._accumulate_prob
+                                else (1 - self._skip_prob)
                             )
                             do_not_skip = rnd < layer_thr
 
                             if not do_not_skip and self._report_skip:
                                 print(
-                                    f"Skipped module {self._module_name}: random() >= layer_thresh"
-                                    f" ({rnd:.6f} >= {layer_thr:.6f})"
+                                    f"Skipped module {self._module_name}: random() >= layer_thr "
+                                    f"({rnd:.6f} >= {layer_thr:.6f})"
                                 )
+                                print(f"Steps between skips: {self._accumulated}")
 
                             if not do_not_skip and self._full_skip:
+                                self._accumulated = 0
                                 return x.to(expected_dtype) if requires_conversion else x
 
                     if active_adapter not in self.lora_variant:  # vanilla LoRA
@@ -546,6 +553,9 @@ if is_bnb_4bit_available():
                             if requires_conversion:
                                 output = output.to(expected_dtype)
                             result = result + output
+                            self._accumulated += 1
+                        else:
+                            self._accumulated = 0
                     else:
                         result = self.lora_variant[active_adapter].forward(
                             self,
