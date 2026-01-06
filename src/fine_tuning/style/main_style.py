@@ -46,7 +46,7 @@ class Finetuner:
     def setup_wandb(self):
         """Setup Weights & Biases logging"""
         style = self.args.dataset_path.split('/')[-1]
-        run_name = f"[{style} | lr={self.args.lr:.1e} | seed={self.args.seed}]"
+        run_name = f"[{style} | 0..{self.args.n_layers} | new]"
         wandb.init(
             project=self.args.wandb_project,
             tags=[self.args.model, self.args.dataset, self.args.optimizer],
@@ -115,6 +115,9 @@ class Finetuner:
 
         logger.info("Model and tokenizer loaded successfully.")
 
+        # See what's up
+        #print(self.model)
+
     def setup_peft(self):
         """Setup PEFT (Parameter Efficient Fine-Tuning) adapters"""
         logger.info("Setting up PEFT adapters...")
@@ -175,10 +178,14 @@ class Finetuner:
             remove_columns=["text"]
         )
 
+        #print(f"Before filtering we had {len(dataset)} samples")
+
         # Filter out samples that exceed max_length
         dataset = dataset.filter(
             lambda sample: len(sample["input_ids"]) < max_len
         )
+
+        #print(f"After filtering we have {len(dataset)} samples")
 
         # Shuffle dataset
         self.train_dataset = dataset.shuffle(seed=self.args.seed)
@@ -256,6 +263,7 @@ class Finetuner:
         )
 
         optimizer = get_optimizer(self.args, self.model)
+        #scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, ...)
 
         trainer = Trainer(
             model=self.model,
@@ -282,59 +290,63 @@ class Finetuner:
         trainer.log_metrics("train", metrics)
         #logger.info(f"Training completed. Metrics: {metrics}")
 
-    def evaluate(self, prompts, theme_path, style_path, theme_layers=None, style_layers=None):
+    def generate(
+        self, prompts, theme_path="",
+        style_path="", target_layers=None,
+        skip_prob=0.0, accumulated_prob=False
+    ):
         """Execute evaluation process"""
         utils.set_global_seed(self.args.seed)
 
+        if not theme_path and not style_path:
+            raise ValueError(
+                "At least one of arguments `theme_path` or `style_path` must be not empty."
+            )
+
+        if isinstance(prompts, str):
+            prompts_file = prompts
+            with open(prompts_file) as f:
+                prompts = [line.strip() for line in f.readlines()]
+
         self.load_model_and_tokenizer()
 
-        output_dir = f"/home/kutroman/LIB/src/fine_tuning/style/{self.args.results_path}"
-        # Apparently, doing this is different from setting up peft and replacing default adapters
-        # with 'theme'/'style' adapters manually. Will look into it later
-        self.model = peft.PeftModel.from_pretrained(self.model, output_dir)
+        if theme_path:
+            self.model = peft.PeftModel.from_pretrained(self.model, theme_path)
+        else:
+            self.model = peft.PeftModel.from_pretrained(self.model, style_path)
 
+        # Set up skip connection-s
         for name, module in self.model.named_modules():
             if isinstance(module, peft.tuners.lora.layer.LoraLayer):
                 try:
                     module._module_name = name
-                    module._skip_prob = 0.05
+                    module._skip_prob = skip_prob
                     module._random_state = self.args.seed
-                    module._start_skipping_from = 5  # index of first 'theme' layer
+                    module._start_skipping_from = self.args.n_layers
                     # Skip all 'theme' layers within 1 forward pass with certain prob; otherwise
                     # each 'theme' layer has an exponentially decreasing prob of not being skipped
                     # and if skipped, all layers after it will be skipped as well
                     module._skip_instantly = True
-                    module._accumulate_prob = True
-                    # Skip the entire layer instead of lora adapters for this layer; should not be
-                    # used for mlp, as mlp.in_features != mlp.out_features
-                    module._full_skip = False
+                    module._accumulate_prob = accumulated_prob
                     # For debug; should be set to bool('v_proj' in name) to avoid reporting 4 or
                     # more times for different modules in the same layer
-                    module._report_skip = False  #('v_proj' in name and '.5.' in name)
+                    module._report_skip = False #('v_proj' in name and '.5.' in name)
                 except Exception as e:
                     logger.error(f"Failed with exception: {e}")
 
         for name, param in self.model.named_parameters():
             if (
-                theme_layers is not None and "lora_" in name and
-                any([name.startswith(f"base_model.model.model.layers.{i}.") for i in theme_layers])
+                target_layers is not None and "lora_" in name and
+                any([name.startswith(f"base_model.model.model.layers.{i}.") for i in target_layers])
             ):
-                # No reason to do this as we probably loaded 'theme' adapters above
-                with safe_open(theme_path, framework="pt", device="cuda") as f:
-                    adapter = f.get_tensor(name.replace(".default", "")) # handles naming convention
-                    with torch.no_grad():
-                        param.copy_(adapter)
-            elif (
-                style_layers is not None and "lora_" in name and
-                any([name.startswith(f"base_model.model.model.layers.{i}.") for i in style_layers])
-            ):
-                with safe_open(style_path, framework="pt", device="cuda") as f:
-                    adapter = f.get_tensor(name.replace(".default", ""))
+                adapter_file = os.path.join(style_path, "adapter_model.safetensors")
+                with safe_open(adapter_file, framework="pt", device="cuda") as f:
+                    adapter = f.get_tensor(name.replace(".default", ""))  # handles naming convention
                     with torch.no_grad():
                         param.copy_(adapter)
             else:
                 pass
-                #print(f"Uninitialized paramter {name} with requires_grad = {param.requires_grad}")
+                #print(f"Uninitialized param {name} with requires_grad = {param.requires_grad}")
 
         self.model.eval()
 
@@ -350,22 +362,25 @@ class Finetuner:
             max_new_tokens=96,
             num_return_sequences=1,
             min_new_tokens=16,
-            #do_sample=True, num_beams=8,
-            #repetition_penalty=1.2,
+            #do_sample=True,  # set to True by default, not sure why...
+            #num_beams=8,
+            repetition_penalty=1.2,
         )
 
-        generated_text = [
+        generated_texts = [
             t[0]["generated_text"].strip().replace("\n", " ")
             for t in output
         ]
 
-        for sample in generated_text:
-            print(sample, '\n', sep="")
+        return generated_texts
 
-        return generated_text
-
-    def eval_klora(self, K, theme_path, style_path, prompts, num_steps, alpha=1.0, beta=0.0):
+    def klora_generate(self, prompts, theme_path, style_path, K):
         utils.set_global_seed(self.args.seed)
+
+        if isinstance(prompts, str):
+            prompts_file = prompts
+            with open(prompts_file) as f:
+                prompts = [line.strip() for line in f.readlines()]
 
         numer = denom = 0.0
 
@@ -373,23 +388,23 @@ class Finetuner:
         num_layers = 32
         modules = [
             'self_attn.v_proj', 'self_attn.o_proj', 'self_attn.q_proj', 'self_attn.k_proj',
-            'mlp.down_proj', 'mlp.up_proj', 'mlp.gate_proj'
+            'mlp.down_proj', 'mlp.up_proj', 'mlp.gate_proj',
         ]
 
-        N = len(modules)
+        num_modules = len(modules)
 
-        style_score = [0] * (N * num_layers)
-        theme_score = [0] * (N * num_layers)
+        style_score = [0] * (num_modules * num_layers)
+        theme_score = [0] * (num_modules * num_layers)
 
-        style_layer_score = [0] * num_layers
-        theme_layer_score = [0] * num_layers
+        #style_layer_score = [0] * num_layers
+        #theme_layer_score = [0] * num_layers
 
         account_qk_projs = True
         account_mlp_projs = True
         for i in range(num_layers):
             for j, x in enumerate(modules):
                 adapter_name = f"base_model.model.model.layers.{i}.{x}"
-                k = N * i + j
+                k = i * num_modules + j
 
                 if not account_qk_projs and ('q_proj' in x or 'k_proj' in x):
                     continue
@@ -402,7 +417,7 @@ class Finetuner:
                     W_abs = torch.abs(torch.matmul(B, A))
                     elems, _ = torch.sort(W_abs.flatten(), descending=True)
                     style_score[k] = torch.sum(elems[:K]).item()
-                    style_layer_score[i] += style_score[k]
+                    #style_layer_score[i] += style_score[k]
                     denom += torch.sum(elems).item()
 
                 with safe_open(theme_path, framework="pt", device="cuda") as f:
@@ -411,85 +426,64 @@ class Finetuner:
                     W_abs = torch.abs(torch.matmul(B, A))
                     elems, _ = torch.sort(W_abs.flatten(), descending=True)
                     theme_score[k] = torch.sum(elems[:K]).item()
-                    theme_layer_score[i] += theme_score[k]
+                    #theme_layer_score[i] += theme_score[k]
                     numer += torch.sum(elems).item()
 
         gamma = numer / denom
-        print(f"{gamma = }")
+        if self.args.verbose:
+            print(f"{gamma = }")
 
         self.load_model_and_tokenizer()
         self.setup_peft()
 
+        target = "base_model.model.model.layers."
+        for name, param in self.model.named_parameters():
+            if name.startswith(target) and "lora_" in name:
+                layer, block, proj = name.removeprefix(target).split(".")[:3]
+                i = int(layer)
+                j = modules.index(block + "." + proj)
+                k = i * num_modules + j
+
+                C_s = gamma * style_score[k]
+                C_t = theme_score[k]
+
+                #if gamma * style_layer_score[i] > theme_layer_score[i]
+                path, label = (
+                    (style_path, 'style') if C_s > C_t else
+                    (theme_path, 'theme')
+                )
+
+                adapter_file = os.path.join(path, "adapter_model.safetensors")
+                with safe_open(adapter_file, framework="pt", device="cuda") as f:
+                    adapter = f.get_tensor(name.replace(".default", ""))
+                    with torch.no_grad():
+                        param.copy_(adapter)
+
+                if self.args.verbose:
+                    print(f"{name} -> {label}: {C_s:.6f} vs {C_t:.6f}")
+
         self.model.eval()  # do not know if this is useful
 
-        for i, prompt in enumerate(prompts):
-            try:
-                input_seq = prompt
-                outputs = []
-                for t in range(num_steps):
-                    S = alpha * t / (num_steps - 1) + beta
-                    S *= gamma
+        generator = pipeline(
+            "text-generation",
+            model=self.model,
+            tokenizer=self.tokenizer,
+        )
 
-                    target = "base_model.model.model.layers."
-                    for name, param in self.model.named_parameters():
-                        if name.startswith(target) and "lora_" in name:
-                            layer, block, proj = name.removeprefix(target).split(".")[:3]
-                            i = int(layer)
-                            j = modules.index(block + "." + proj)  # not used
-                            k = N * i + j                          # not used
+        output = generator(
+            prompts,
+            max_new_tokens=96,
+            num_return_sequences=1,
+            min_new_tokens=16,
+            repetition_penalty=1.2,
+        )
 
-                            path = (
-                                style_path if S * style_layer_score[i] > theme_layer_score[i] else
-                                theme_path
-                            )
-                            with safe_open(path, framework="pt", device="cuda") as f:
-                                adapter = f.get_tensor(name.replace(".default", ""))
-                                with torch.no_grad():
-                                    param.copy_(adapter)
+        generated_texts = [
+            t[0]["generated_text"].strip().replace("\n", " ")
+            for t in output
+        ]
 
-                    debug_print = False
-                    if debug_print and t % 3 == 2:  # print every 3 steps starting with step 2
-                        print(f"Step t = {t} with S = {S / gamma} and S' = {S}")
-                        for i in range(num_layers):
-                            subject = (
-                                "style" if S * style_layer_score[i] > theme_layer_score[i] else
-                                "theme"
-                            )
-                            print(
-                                f"Initialized layer {' ' if i < 10 else ''}{i} with '{subject}' adapter "
-                                f"(S' * {style_layer_score[i]:.4f} = {S * style_layer_score[i]:.4f}"
-                                f" vs {theme_layer_score[i]:.4f})"
-                            )
-
-                    generator = pipeline(
-                        "text-generation",
-                        model=self.model,
-                        tokenizer=self.tokenizer,
-                        return_full_text=False,
-                    )
-
-                    generated_seq = generator(
-                        input_seq,
-                        max_new_tokens=96,
-                        num_return_sequences=1,
-                    )[0]["generated_text"].strip().replace("\n", " ")
-
-                    if generated_seq == "":
-                        print(f"Stopping at step {t}")
-                        break
-
-                    output = (
-                        generated_seq if ' ' not in generated_seq else
-                        generated_seq.split(' ')[0]
-                    )
-                    outputs.append(output)
-                    input_seq = input_seq + ' ' + output
-
-                print(outputs)
-                print(input_seq)
-            except Exception as e:
-                logger.error(f"Error processing prompt {i}: {e}")
-                continue
+        return generated_texts
 
     def run_each_layer(self):
         logger.info("Starting finetuning pipeline")
@@ -556,6 +550,11 @@ class Finetuner:
             raise ValueError("ft_stratefy=Full is not supported for this method")
 
         peft_args.task_type = "CAUSAL_LM"
+        #peft_args.rank_pattern = {
+        #    #base_model.model.model.layers.{i // 2}.self_attn.
+        #    f"{'k' if i % 2 == 0 else 'o'}_proj": (8 if  i % 2 == 0 else 16)
+        #    for i in range(32 * 2)
+        #}
         self.model = peft.get_peft_model(self.model, peft_args)
 
         # See what's up
@@ -577,7 +576,7 @@ class Finetuner:
             layer_state = {}
             for key, value in peft_state_dict.items():
                 if (
-                    (target_layers is None and "layers." in key) or
+                    (target_layers is None and ("layers" in key or "lm_head" in key)) or
                     (target_layers is not None and any([f"layers.{i}." in key for i in target_layers]))
                 ):
                     if self.args.verbose:
@@ -615,20 +614,128 @@ class Finetuner:
         self.load_datasets()
         self.train()
 
+    def score(self, texts, model_path=None, return_token_details=False):
+        utils.set_global_seed(self.args.seed)
+
+        # Load base model and tokenizer (avoid loading multiple times?)
+        #self.load_model_and_tokenizer()
+
+        model = peft.PeftModel.from_pretrained(
+            self.model,
+            (
+                f"./src/fine_tuning/style/{self.args.results_path}" if model_path is None else
+                model_path
+            ),
+        )
+        model.cuda()
+        model.eval()
+
+        logger.info(f"Started scoring texts...")
+
+        results = []
+
+        #bs = self.args.batch_size  # use datasets | range((len(texts) + bs - 1) // bs)
+        for i in range(0, len(texts), self.args.batch_size):
+            inputs = self.tokenizer(
+                texts[i:(i + self.args.batch_size)],
+                max_length=self.args.max_seq_length,
+                padding='max_length',
+                truncation=True,
+                return_tensors='pt',
+            )
+
+            input_ids = inputs['input_ids'].cuda()
+            attention_mask = inputs['attention_mask'].cuda()
+
+            with torch.no_grad():
+                outputs = model(input_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+
+                # Shift for next-token prediction
+                shifted_logits = logits[:, :-1, :]
+                shifted_targets = input_ids[:, 1:]
+                shifted_mask = attention_mask[:, 1:]
+
+                # Calculate log probabilities
+                log_probs = torch.nn.functional.log_softmax(shifted_logits, dim=-1)
+                token_log_probs = log_probs.gather(2, shifted_targets.unsqueeze(-1)).squeeze(-1)
+
+                # Mask out padding
+                token_log_probs = token_log_probs * shifted_mask
+
+                # Process each sequence
+                for j in range(self.args.batch_size):
+                    # Get valid positions
+                    valid_mask = shifted_mask[j].bool()
+                    valid_log_probs = token_log_probs[j][valid_mask]
+
+                    token_details = []
+                    if len(valid_log_probs) == 0:
+                        # Empty sequence or single token
+                        agg_scores = {
+                            'mean_log_prob': 0.0,
+                            'total_log_prob': 0.0,
+                            'perplexity': 1.0,
+                            'token_count': 0
+                        }
+                    else:
+                        # Calculate aggregate scores
+                        mean_log_prob = valid_log_probs.mean().item()
+                        total_log_prob = valid_log_probs.sum().item()
+                        perplexity = torch.exp(-torch.tensor(mean_log_prob)).item()
+
+                        agg_scores = {
+                            'mean_log_prob': mean_log_prob,
+                            'total_log_prob': total_log_prob,
+                            'perplexity': perplexity,
+                            'token_count': len(valid_log_probs)
+                        }
+
+                        # Get token details if requested
+                        if return_token_details:
+                            tokens = self.tokenizer.convert_ids_to_tokens(input_ids[j])
+
+                            # Iterate through valid positions
+                            valid_positions = torch.where(valid_mask)[0]
+                            for pos_idx, pos in enumerate(valid_positions):
+                                # pos in shifted_mask corresponds to token at position pos+1
+                                token_pos = pos.item() + 1
+                                token = tokens[token_pos]
+                                log_prob = valid_log_probs[pos_idx].item()
+                                prob = torch.exp(torch.tensor(log_prob)).item()
+
+                                token_details.append({
+                                    'token': token,
+                                    'log_prob': log_prob,
+                                    'probability': prob,
+                                })
+
+                    result = {
+                        #'text': text,
+                        'log_probs': valid_log_probs,
+                        **agg_scores
+                    }
+
+                    if return_token_details:
+                        result['token_details'] = token_details
+
+                    results.append(result)
+
+        logger.info(f"Finished scoring texts...")
+
+        return results
+
 
 def main(args):
     """Main entry point"""
     finetuner = Finetuner(args)
 
-    ## For randoms layer experiments
-    #theme_layers = [0, 1, 9, 12, 14, 15, 16, 18, 22, 24, 25, 27, 31]
-    #style_layers = [2, 3, 4, 5, 6, 7, 8, 10, 11, 13, 17, 19, 20, 21, 23, 26, 28, 29, 30]
-
     if args.do_predict:
         neutral_prompts = [
-            "She is", "The stars are", "Today, our", "I would ask you",
+            "She is", "Today, our", "I would ask you",
             "Well, whatever", "It is good", "What if",
-            "Today I woke up slightly more tired than usual and headed",
+            "The stars are",
+            #"Today I woke up slightly more tired than usual and headed",
         ]
         cosmology_prompts = [
             "When the accretion rate increases", "If the magnetic field reverses",
@@ -643,33 +750,77 @@ def main(args):
             "Fundamentally, electrons are extremely lightweight particles that", "Engineers use Hall effect to build",
             "You would need to reach the speed of light to", "None of the existing theories could explain the effect of",
         ]
-        default_eval = True
-        if default_eval:
-            finetuner.evaluate(
-                neutral_prompts,
-                theme_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
-                "/Llama_cosmology/seed_8288/all_layers/adapter_model.safetensors",
-                style_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
-                "/Llama_aggressive/seed_8288/layers_0_5/adapter_model.safetensors",
-                # Set to None because 'theme' adapter will be loaded using .from_pretrained
-                theme_layers=None, #list(range(5, 32))
-                style_layers=list(range(0, 5)),
+
+        default_gen = True  # convinient switch for myself
+        if default_gen:
+            generated_text = finetuner.generate(
+                "./src/fine_tuning/style/data/input.txt",
+                theme_path="./src/fine_tuning/style/results_raw"
+                "/Llama_cosmology/seed_8288/layers_5_32",
+                style_path="./src/fine_tuning/style/results_raw"
+                "/Llama_aggressive/seed_8288/layers_0_5", #_with_mlp
+                target_layers=list(range(0, 5)),
+                skip_prob=0.0,
+                accumulated_prob=True
             )
         else:
-            finetuner.eval_klora(
-                K=64,
-                theme_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
-                "/Llama_cosmology/seed_8288/all_layers/adapter_model.safetensors",
-                style_path="/home/kutroman/LIB/src/fine_tuning/style/results_raw"
-                "/Llama_aggressive/seed_8288/all_layers/adapter_model.safetensors",
-                prompts=["She is", "The stars are", "Today, our"],
-                num_steps=24,
-                alpha=1.0,
-                beta=0.7,
+            generated_text = finetuner.klora_generate(
+                neutral_prompts,
+                theme_path="./src/fine_tuning/style/results_raw"
+                "/Llama_cosmology/seed_8288/all_layers",
+                style_path="./src/fine_tuning/style/results_raw"
+                "/Llama_aggressive/seed_8288/all_layers",  # <- with left padding
+                K=(args.lora_r ** 2),
             )
+
+        print_results = False  # another convinient switch
+        if print_results:
+            for sample in generated_text:
+                print(sample, end='\n\n')  # add 2 newlines to better see where generation ends
+        else:
+            with open("./src/fine_tuning/style/data/output.txt", 'w') as f:
+                for sample in generated_text:
+                    f.write(sample + '\n')
     else:
-        # save_adapters=True saves only adapters (not optimizer, tokenizer and other stuff)
-        finetuner.run(target_layers=list(range(0, 5)), save_adapters=True)
+        # use save_adapters=True to save only adapters (not optimizer, tokenizer and other stuff)
+        #finetuner.run(target_layers=list(range(0, args.n_layers)), save_adapters=True)
+        score("./src/fine_tuning/style/data/input.txt", args, finetuner)
+
+
+def score(texts, args, finetuner):
+    STYLES, N = ["sad", "cheerful", "agitational", "reflective"], 4
+    style_scores = []
+
+    if isinstance(texts, str):
+        texts_file = texts
+        with open(texts_file) as f:
+            texts = [line.strip() for line in f.readlines()]
+
+    finetuner.load_model_and_tokenizer()
+    for style in STYLES:
+        style_scores.append(finetuner.score(
+            texts,
+            f"./src/fine_tuning/style/results_raw/Llama_splitted_{style}"
+            f"/seed_8288/layers_0_{args.n_layers}_with_mlp"
+        ))
+
+    avg_var = 0.0
+    for i in range(len(texts)):
+        preds = style_scores[0][i]['log_probs']
+        #print(preds)
+        mean = preds
+        mean_sqr_norm = torch.norm(preds).item() ** 2
+        for j in range(1, N):
+            preds = style_scores[j][i]['log_probs']
+            #print(preds)
+            mean += preds
+            mean_sqr_norm += torch.norm(preds).item() ** 2
+        mean /= N
+        mean_sqr_norm /= N
+        var = mean_sqr_norm - (torch.norm(mean).item() ** 2)
+        avg_var += var
+    avg_var /= len(texts)
+    print(f"Averaged variance: {avg_var}")
 
 
 if __name__ == "__main__":

@@ -118,7 +118,8 @@ class LoraLayer(BaseTunerLayer):
         self._skip_instantly = False
         self._accumulate_prob = False
         self._accumulated = 0
-        self._full_skip = False
+        #self._skip_count = 0
+        #self._full_skip = False
         self._report_skip = False
         self.kwargs = kwargs
 

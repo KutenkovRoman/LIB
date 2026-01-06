@@ -534,16 +534,22 @@ if is_bnb_4bit_available():
                             )
                             do_not_skip = rnd < layer_thr
 
+                            #if self._skip_count > 0:
+                            #    do_not_skip = False
+                            #elif not do_not_skip:
+                            #    self._skip_count = random.randint(0, 5)
+
                             if not do_not_skip and self._report_skip:
                                 print(
                                     f"Skipped module {self._module_name}: random() >= layer_thr "
                                     f"({rnd:.6f} >= {layer_thr:.6f})"
                                 )
                                 print(f"Steps between skips: {self._accumulated}")
+                                #print(f"Will skip {self._skip_count} times after this")
 
-                            if not do_not_skip and self._full_skip:
-                                self._accumulated = 0
-                                return x.to(expected_dtype) if requires_conversion else x
+                            #if not do_not_skip and self._full_skip:
+                            #    self._accumulated = 0
+                            #    return x.to(expected_dtype) if requires_conversion else x
 
                     if active_adapter not in self.lora_variant:  # vanilla LoRA
                         if do_not_skip:
@@ -556,6 +562,7 @@ if is_bnb_4bit_available():
                             self._accumulated += 1
                         else:
                             self._accumulated = 0
+                            #self._skip_count = max(self._skip_count - 1, 0)
                     else:
                         result = self.lora_variant[active_adapter].forward(
                             self,

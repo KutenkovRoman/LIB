@@ -211,16 +211,16 @@ def get_peft_arguments(args):
             "fc1",
             "fc2",
         ]
-    elif "llama" in args.model.lower():
+    elif "llama" in model_name:
         peft_args.target_modules = [
             "q_proj",
             "k_proj",
             "v_proj",
             "o_proj",
-            #"gate_proj",
-            #"up_proj",
-            #"down_proj",
-            "lm_head",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            #"lm_head",
         ]
     elif "qwen" in model_name:
         peft_args.target_modules = [
@@ -246,6 +246,17 @@ def get_peft_arguments(args):
             "q",
             "k",
             "wi",
+        ]
+    elif "gemma" in model_name:
+        peft_args.target_modules = [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+            "lm_head",
         ]
     else:
         raise ValueError(f"Pass target_modules to your model {args.model}")
