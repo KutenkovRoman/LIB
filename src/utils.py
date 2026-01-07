@@ -231,7 +231,7 @@ def get_peft_arguments(args):
             "gate_proj",
             "up_proj",
             "down_proj",
-            "lm_head",
+            #"lm_head",
         ]
     elif "distilbert-base" in model_name:
         peft_args.target_modules = [

@@ -215,7 +215,7 @@ class Finetuner:
             lambda sample: len(sample["input_ids"]) < max_len
         )
 
-    def train(self):
+    def train(self, save_adapters):
         """Execute training process"""
         if self.args.do_not_train:
             logger.info("Training skipped (do_not_train=True)")
@@ -231,6 +231,7 @@ class Finetuner:
 
         # Setup trainer
         output_dir = f"./src/fine_tuning/style/{self.args.results_path}"
+        do_save = (save_adapters == "default")
         training_args = TrainingArguments(
             do_train=(not self.args.do_not_train),
             do_eval=(not self.args.do_not_eval),
@@ -243,20 +244,20 @@ class Finetuner:
             gradient_accumulation_steps=self.args.grad_acc_steps,
             lr_scheduler_type=self.args.lr_scheduler_type,
             warmup_steps=self.args.warmup_steps,
-            warmup_ratio=self.args.warmup_ratio, #added
-            max_grad_norm=self.args.max_grad_norm, #added
+            warmup_ratio=self.args.warmup_ratio,
+            max_grad_norm=self.args.max_grad_norm,
             learning_rate=self.args.lr,
             num_train_epochs=self.args.n_epoches_train,
             max_steps=self.args.max_steps_train,
             logging_steps=self.args.logging_steps,
             eval_strategy=self.args.eval_strategy,
-            save_strategy=self.args.eval_strategy,
+            save_strategy=("steps" if do_save else "no"),
             eval_steps=self.args.eval_steps,
-            save_steps=self.args.eval_steps,
+            save_steps=(100000 if do_save else -1),  # save at the very last step
             bf16=(self.args.dtype == "bfloat16"),
             fp16=(self.args.dtype == "float16"),
             output_dir=output_dir,
-            overwrite_output_dir=True, #added
+            overwrite_output_dir=True,
             #logging_dir=output_dir,
             run_name=self.args.run_name,
             report_to=["wandb" if self.args.wandb else "none"],
@@ -547,7 +548,7 @@ class Finetuner:
 
         peft_args = utils.get_peft_arguments(self.args)
         if peft_args is None:
-            raise ValueError("ft_stratefy=Full is not supported for this method")
+            raise ValueError("`ft_stratefy=Full` is not supported for this method")
 
         peft_args.task_type = "CAUSAL_LM"
         #peft_args.rank_pattern = {
@@ -568,9 +569,9 @@ class Finetuner:
         self.load_datasets()
 
         # Execute training and evaluation
-        self.train()
+        self.train(save_adapters)
 
-        if save_adapters:
+        if save_adapters == "manual":
             peft_state_dict = peft.get_peft_model_state_dict(self.model)
 
             layer_state = {}
@@ -760,7 +761,7 @@ def main(args):
                 style_path="./src/fine_tuning/style/results_raw"
                 "/Llama_aggressive/seed_8288/layers_0_5", #_with_mlp
                 target_layers=list(range(0, 5)),
-                skip_prob=0.0,
+                skip_prob=0.175,
                 accumulated_prob=True
             )
         else:
@@ -782,9 +783,10 @@ def main(args):
                 for sample in generated_text:
                     f.write(sample + '\n')
     else:
-        # use save_adapters=True to save only adapters (not optimizer, tokenizer and other stuff)
-        #finetuner.run(target_layers=list(range(0, args.n_layers)), save_adapters=True)
-        score("./src/fine_tuning/style/data/input.txt", args, finetuner)
+        # use save_adapters="manual" to manually save only adapters (no optimizer, tokenizer and other stuff)
+        # use save_adapters="default" to save using hf trainer at the very last step
+        finetuner.run(target_layers=list(range(0, args.n_layers)), save_adapters="default")
+        #score("./src/fine_tuning/style/data/input.txt", args, finetuner)
 
 
 def score(texts, args, finetuner):
