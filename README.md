@@ -1,57 +1,52 @@
-# 🚀 Optimization Library (LIB)
+## Rebuttal Experiments
 
-This library provides a comprehensive framework for experimenting with various optimization algorithms across different machine learning tasks. The library supports multiple datasets and models, with a special focus on optimization strategies.
+Additional experimental results and analysis conducted during the review process (see `rebuttal/` folder):
 
-## 🛠️ Setup
+### 1. Adapter Selection Stability (Jaccard Similarity)
 
-### Environment Setup
+We conduct a **new ablation study** to evaluate importance selection consistency across 5 random seeds. Using Jaccard similarity, we observe high stability: most seed pairs achieved a similarity of 1.0, with a minimum of 0.82 (representing a 9/10 adapter overlap). This confirms WeightLoRA identifies architecturally critical layers rather than being driven by initialization noise.
 
-You can create the required environment using the provided `environment.yaml` file:
+**Location:** `rebuttal/jaccard_similarity.pdf`
 
-```bash
-conda env create -f environment.yaml
-conda activate optim_lib
-```
+### 2. Llama-3.1 70B Experiments
 
-Alternatively (to avoid setting up conda) you could use `requirements.txt` file from main branch:
-```bash
-python -m venv optim_venv
-source optim_venv/bin/activate
-pip install -r requirements.txt
-```
+We evaluate LoRA, WeightLoRA, and WeightLoRA+ across multiple ranks ($r \in \{2, 4, 8, 16\}$) on the GSM8K dataset, demonstrating that WeightLoRA+ consistently achieves superior performance, particularly at higher ranks and WeightLoRA keeps LoRA metrics. At the same time, WeightLoRA attains competitive results while using approximately three times fewer trainable parameters.
 
-## 📁 Project Structure
+**Location:** `rebuttal/llama70b_gsm8k_rank_comparison.pdf`
 
-The project is organized into several key directories:
+## Experiments
 
-- `src/` - Core source code
-  - `config.py` - Main configuration parser
-  - `libsvm/` - LIBSVM datasets and models
-  - `cv/` - Computer Vision datasets and models
-  - `fine_tuning/` - Fine-tuning strategies for pre-trained models
-  - `optimizers/` - Implementation of various optimization algorithms
-- `scripts/` - Ready-to-use scripts for running experiments
-- `data/` - Default location for datasets
-- `notebooks/` - Example notebooks
+This repository contains code to reproduce the experimental results for WeightLoRA and WeightLoRA+ on encoder-only, encoder–decoder, and decoder-only Transformer models.
 
-## ⚙️ Argument System
+### Methods
+- **LoRA**: standard low-rank adaptation baseline.
+- **WeightLoRA**: short warm-up phase estimates adapter importance and selects a subset of adapters; training then continues as standard LoRA on the selected subset.
+- **WeightLoRA+**: budget-preserving variant; after warm-up, a subset of adapters is kept and its rank is increased while keeping the total LoRA parameter budget fixed.
 
-The library uses a hierarchical argument system:
+### Benchmarks and models
 
-1. **Base Arguments** (`config.py`): Core arguments applicable to all experiments
-2. **Task-Specific Arguments**: Extended arguments for specific tasks, specifically
-   - Fine-Tuning Arguments (`fine_tuning/config_ft.py`)
+#### Natural Language Understanding (GLUE)
+- **Model**: DeBERTaV3-base.
+- **Setup A (attention-only adapters)**: adapters attached to self-attention projections (fixed rank, default `r=8`) to enable per-layer adapter selection comparisons with dynamic/pruning-based baselines.
+- **Setup B (adapters on all linear layers)**: tuned LoRA baseline across multiple ranks; compares LoRA vs WeightLoRA vs WeightLoRA+ under matched training protocol.
+- **Model**: Llama3-7B (scaling experiment).
+- **Metrics**: standard GLUE metrics (accuracy / MCC / correlation depending on task).
 
-Arguments are processed hierarchically. When running an experiment:
-1. Base arguments are loaded first
-2. Based on the selected dataset, task-specific arguments are added
-3. If a configuration file is specified with `--config_name`, its values override defaults
+#### Classical LLM Benchmarks
+- **Model**: Qwen3-8B.
+- **Tasks**: MathQA, GSM8K, HellaSwag, BoolQ, ARC-Challenge.
+- **Metrics**: accuracy.
 
-## 🔧 How to run code
+#### Question Answering
+- **Model**: DeBERTaV3-base.
+- **Datasets**: SQuAD v1.1 and SQuAD v2.0.
+- **Metric**: F1 score.
 
-1. To run code use `python ./src/run_experiment.py` and provide neccessary arguments
-2. There are examplary scripts `Llama2_alt.sh` and `Qwen.sh` located in `./scripts/style`
-3. You must set `dataset=style` and specify `--dataset_path` to choose dataset (stored locally) that will be used
-4. To use `wandb` (if available) set flag `--wandb` and specify `--wandb_project`
-5. To save adapters set `save_strategy=steps/epoches` and specify `--save_name`, results will be stored in `./scr/fine_tuning/style/results_raw/{save_name}`
-6. Some models (e.g. `Llama-2-7b-hf`) require hf-token to load
+#### Natural Language Generation
+- **Model**: BART-large.
+- **Datasets**: XSum and CNN/DailyMail.
+- **Metric**: ROUGE-1.
+
+### Reporting
+- For each benchmark, comparisons include standard LoRA, WeightLoRA, and WeightLoRA+.
+- When applicable, results are reported across multiple ranks (e.g., `r ∈ {1,2,4,8,16}` depending on the setting) and averaged over multiple random seeds.
