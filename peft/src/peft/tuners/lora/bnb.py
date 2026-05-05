@@ -511,58 +511,64 @@ if is_bnb_4bit_available():
                         expected_dtype = result.dtype
                         x = self._cast_input_dtype(x, lora_A.weight.dtype)
 
-                    do_not_skip = True
-                    if self._module_name is not None and ".layers." in self._module_name:
-                        random.seed(self._random_state)
+                    # do_not_skip = True
+                    # if self._module_name is not None and ".layers." in self._module_name:
+                    #     random.seed(self._random_state)
 
-                        self._random_state = random.randint(0, 2**31)
-                        rnd = random.random()
+                    #     self._random_state = random.randint(0, 2**31)
+                    #     rnd = random.random()
 
-                        start = self._module_name.index(".layers.") + 8
-                        end = self._module_name.index(".", start)
-                        n = int(self._module_name[start:end]) - self._start_skipping_from + 1
+                    #     start = self._module_name.index(".layers.") + 8
+                    #     end = self._module_name.index(".", start)
+                    #     n = int(self._module_name[start:end]) - self._start_skipping_from + 1
 
-                        if n > 0:
-                            #layer_thr = (
-                            #    (1 - self._skip_prob) if self._skip_instantly else
-                            #    (1 - self._skip_prob)**n
-                            #)
-                            layer_thr = (
-                                (1 - self._skip_prob) ** (self._accumulated + 1)
-                                if self._accumulate_prob
-                                else (1 - self._skip_prob)
-                            )
-                            do_not_skip = rnd < layer_thr
+                    #     if n > 0:
+                    #         #layer_thr = (
+                    #         #    (1 - self._skip_prob) if self._skip_instantly else
+                    #         #    (1 - self._skip_prob)**n
+                    #         #)
+                    #         layer_thr = (
+                    #             (1 - self._skip_prob) ** (self._accumulated + 1)
+                    #             if self._accumulate_prob
+                    #             else (1 - self._skip_prob)
+                    #         )
+                    #         do_not_skip = rnd < layer_thr
 
-                            #if self._skip_count > 0:
-                            #    do_not_skip = False
-                            #elif not do_not_skip:
-                            #    self._skip_count = random.randint(0, 5)
+                    #         if self._skip_count > 0:
+                    #             do_not_skip = False
+                    #         elif not do_not_skip and self._consecutive_skips:
+                    #             distribution = [1, 1, 2, 2, 4, 6]
+                    #             idx = random.randint(1, len(distribution)) - 1
+                    #             self._skip_count = distribution[idx]
+                    #             if self._report_skip:
+                    #                 print(f"Will skip {self._skip_count} consecutive times")
 
-                            if not do_not_skip and self._report_skip:
-                                print(
-                                    f"Skipped module {self._module_name}: random() >= layer_thr "
-                                    f"({rnd:.6f} >= {layer_thr:.6f})"
-                                )
-                                print(f"Steps between skips: {self._accumulated}")
-                                #print(f"Will skip {self._skip_count} times after this")
-
-                            #if not do_not_skip and self._full_skip:
-                            #    self._accumulated = 0
-                            #    return x.to(expected_dtype) if requires_conversion else x
+                    #         if rnd >= layer_thr and self._report_skip:
+                    #             print(
+                    #                 f"Skipped module {self._module_name}: random() >= layer_thr "
+                    #                 f"({rnd:.6f} >= {layer_thr:.6f})"
+                    #             )
+                    #             print(f"Steps between skips: {self._accumulated}")
 
                     if active_adapter not in self.lora_variant:  # vanilla LoRA
-                        if do_not_skip:
-                            output = lora_B(lora_A(dropout(x))) * scaling
-                            if self.use_weight_lora[active_adapter]:
-                                output = output * self.lora_weight[active_adapter]
-                            if requires_conversion:
-                                output = output.to(expected_dtype)
-                            result = result + output
-                            self._accumulated += 1
-                        else:
-                            self._accumulated = 0
-                            #self._skip_count = max(self._skip_count - 1, 0)
+                        # if do_not_skip:
+                        #     output = lora_B(lora_A(dropout(x))) * scaling
+                        #     if self.use_weight_lora[active_adapter]:
+                        #         output = output * self.lora_weight[active_adapter]
+                        #     if requires_conversion:
+                        #         output = output.to(expected_dtype)
+                        #     result = result + output
+                        #     self._accumulated += 1
+                        # else:
+                        #     self._accumulated = 0
+                        #     self._skip_count = max(self._skip_count - 1, 0)
+
+                        output = lora_B(lora_A(dropout(x))) * scaling
+                        if self.use_weight_lora[active_adapter]:
+                            output = output * self.lora_weight[active_adapter]
+                        if requires_conversion:
+                            output = output.to(expected_dtype)
+                        result = result + output
                     else:
                         result = self.lora_variant[active_adapter].forward(
                             self,
